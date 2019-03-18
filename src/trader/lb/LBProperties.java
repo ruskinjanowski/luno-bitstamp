@@ -30,8 +30,13 @@ public class LBProperties {
 		}
 	}
 
-	public static final boolean exchangerate = Boolean.parseBoolean(getTextProperty("exchangerate"));
-	public static final boolean difference = Boolean.parseBoolean(getTextProperty("difference"));
+	// public static final boolean useExchangerate =
+	// Boolean.parseBoolean(getTextProperty("useExchangerate"));
+	// public static final double exchangerate = getProperty("exchangerate");
+	// public static final boolean useDifference =
+	// Boolean.parseBoolean(getTextProperty("useDifference"));
+	//
+	// public static final double difference = getProperty("difference");
 
 	private static double getProperty(String p) {
 		String val = (String) props.getProperty(p);

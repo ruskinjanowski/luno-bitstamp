@@ -1,12 +1,10 @@
 package trader.lb;
 
 import java.io.File;
-import java.io.IOException;
 
 import org.knowm.xchange.currency.CurrencyPair;
 import org.knowm.xchange.dto.Order.OrderType;
 
-import com.trader.logging.LimitsAndRates;
 import com.trader.logging.LoggingUtil;
 import com.trader.logging.Transaction;
 import com.trader.market.data.MarketData;
@@ -24,6 +22,7 @@ import arbtrader.credentials.TraderFolders.ProgramName;
 import arbtrader.model.SpreadChanged;
 import arbtrader.stats.TradeLimits;
 import arbtrader.stats.limits.MeanStandardDeviation;
+import arbtrader.stats.limits.MeanStandardDeviation.Formula;
 
 public class LBTrader implements IOrderFilled, ISpreadListener {
 
@@ -32,18 +31,19 @@ public class LBTrader implements IOrderFilled, ISpreadListener {
 
 	final LunoBTCManager luno;
 
-	private final MeanStandardDeviation limitGetter;
+	private final MeanStandardDeviation limitGetterDiff;
+	private final MeanStandardDeviation limitGetterRate;
 	AccWallet wallet;
 
-	public LBTrader(MeanStandardDeviation limitsGetter) {
+	public LBTrader() {
 
 		// logging files
-		String type = limitsGetter.formula.toString();
-		transactionFile = new File(TraderFolders.getLogging(ProgramName.LunoBitstamp), "transactions" + type + ".txt");
-		limitsFile = new File(TraderFolders.getLogging(ProgramName.LunoBitstamp), "limits" + type + ".txt");
+		transactionFile = new File(TraderFolders.getLogging(ProgramName.LunoBitstamp), "transactions.txt");
+		limitsFile = new File(TraderFolders.getLogging(ProgramName.LunoBitstamp), "limits.txt");
 		wallet = new AccWallet(EMarketType.ZAR_BTC);
 
-		this.limitGetter = limitsGetter;
+		limitGetterDiff = new MeanStandardDeviation(Formula.USDBITSTAMP_ZARLUNO_BTC_PERCDIFF, 24 * 60, 1);
+		limitGetterRate = new MeanStandardDeviation(Formula.USDBITSTAMP_ZARLUNO_BTC, 24 * 60, 1);
 
 		luno = new LunoBTCManager(EMarketType.ZAR_BTC, wallet);
 		luno.addOrderFilledListener(this);
@@ -70,68 +70,58 @@ public class LBTrader implements IOrderFilled, ISpreadListener {
 
 	}
 
-	TradeLimits tl;
-	long tlTime = 0;
-
-	private TradeLimits getTradeLimits() {
-		if (System.currentTimeMillis() - tlTime > 5 * 60 * 1000) {
-			try {
-				tl = limitGetter.getTradeLimits();
-				double dp = tl.upper - tl.lower;
-				if (dp < 1) {
-					System.out.println("limits too small: " + tl);
-					double mid = (tl.upper + tl.lower) / 2;
-
-					tl = new TradeLimits(mid + 0.5, mid - 0.5);
-				} else {
-					// okay
-				}
-				tlTime = System.currentTimeMillis();
-				System.out.println("updated tradeLimimits: " + tl);
-
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-
-		}
-
-		return tl;
-	}
-
 	@Override
 	public void spreadChanged() {
 		try {
-			TradeLimits tradeLimits = getTradeLimits();
+
+			TradeLimits limitsDiff = limitGetterDiff.getTradeLimits(1, 5);
+			TradeLimits limitsRate = limitGetterRate.getTradeLimits(0.1, 5);
+
 			double zarusd = MarketData.INSTANCE.getZARrUSD(1).mid();
 			SpreadChanged spread = MarketEvents.getSpread(EMarketType.ZAR_BTC);
 			MarketPrice mp = MarketData.INSTANCE.getUSDrBTC(1);
 
-			double rateupper = spread.priceAsk / mp.bid;
-			double ratelower = spread.priceBid / mp.ask;
-			double diffupper = (rateupper - zarusd) / zarusd * 100;
-			double difflower = (ratelower - zarusd) / zarusd * 100;
+			double rateUtoZ = spread.priceAsk / mp.ask;
+			double rateZtoU = spread.priceBid / mp.bid;
+			double diffUtoZ = (rateUtoZ - zarusd) / zarusd * 100;
+			double diffZtoU = (rateZtoU - zarusd) / zarusd * 100;
 
-			LimitsAndRates lr = new LimitsAndRates(tradeLimits.upper, tradeLimits.lower, diffupper, difflower);
-			System.out.println(lr);
-			LoggingUtil.appendToFile(limitsFile, lr.toString());
-
-			System.out.println("rates: " + lr);
-			if (diffupper > tradeLimits.upper) {
+			String log = "";
+			if (diffUtoZ > limitsDiff.upper && rateUtoZ > limitsRate.upper) {
 				// sell BTC
-
+				System.out.println("Selling luno...");
+				log = append("diff", log, diffUtoZ, limitsDiff.upper);
+				log = append("rate", log, rateUtoZ, limitsRate.upper);
+				System.out.println(log);
 				luno.setWantedBTC(0);
-			} else if (difflower < tradeLimits.lower) {
+			} else if (diffZtoU < limitsDiff.lower && rateZtoU < limitsRate.lower) {
 				// buy BTC
+				System.out.println("Buying luno...");
+
+				log = append("diff", log, diffZtoU, limitsDiff.lower);
+				log = append("rate", log, rateZtoU, limitsRate.lower);
+				System.out.println(log);
 				double buy = luno.getWallet().getMaxBuy(spread.priceAsk);
-				luno.tradeBTC(buy);// use the wrong price on purpose for safety to
-									// avoid
-									// insufficient funds error
+				luno.tradeBTC(buy);
 			} else {
 				// don't trade
+				System.out.println("Not trading...");
+				System.out.println(limitsDiff + "," + limitsRate + "," + diffUtoZ + "," + rateUtoZ);
 				luno.setWantedBTC(wallet.getBtc());
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
+	}
+
+	private String append(String description, String existing, double actual, double limit) {
+		boolean eval = actual > limit;
+
+		// logging
+		actual = Math.floor(actual * 10_000) / 10_000;
+		limit = Math.floor(limit * 10_000) / 10_000;
+		String toAppend = description + " " + eval + " " + actual + ">" + limit + "  ";
+
+		return existing + toAppend;
 	}
 }
