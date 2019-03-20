@@ -5,21 +5,21 @@ import java.io.File;
 import org.knowm.xchange.currency.CurrencyPair;
 import org.knowm.xchange.dto.Order.OrderType;
 
+import com.trader.client.MarketEvents;
+import com.trader.client.MarketEvents.ISpreadListener;
+import com.trader.definitions.TraderFolders;
+import com.trader.definitions.TraderFolders.ProgramName;
 import com.trader.logging.LoggingUtil;
 import com.trader.logging.Transaction;
-import com.trader.market.data.MarketData;
-import com.trader.market.data.MarketData.MarketPrice;
-import com.trader.single.AccWallet;
-import com.trader.single.IOrderFilled;
-import com.trader.single.LunoBTCManager;
-import com.trader.single.OrderTracker;
+import com.trader.luno.AccWallet;
+import com.trader.luno.IOrderFilled;
+import com.trader.luno.LunoBTCManager;
+import com.trader.luno.OrderTracker;
+import com.trader.model.MarketType;
+import com.trader.model.Spread;
+import com.trader.utility.MarketData;
+import com.trader.utility.MarketData.MarketPrice;
 
-import arbtrader.controller.MarketEvents;
-import arbtrader.controller.MarketEvents.ISpreadListener;
-import arbtrader.credentials.EMarketType;
-import arbtrader.credentials.TraderFolders;
-import arbtrader.credentials.TraderFolders.ProgramName;
-import arbtrader.model.SpreadChanged;
 import arbtrader.stats.TradeLimits;
 import arbtrader.stats.limits.MeanStandardDeviation;
 import arbtrader.stats.limits.MeanStandardDeviation.Formula;
@@ -27,7 +27,6 @@ import arbtrader.stats.limits.MeanStandardDeviation.Formula;
 public class LBTrader implements IOrderFilled, ISpreadListener {
 
 	private final File transactionFile;
-	private final File limitsFile;
 
 	final LunoBTCManager luno;
 
@@ -39,16 +38,16 @@ public class LBTrader implements IOrderFilled, ISpreadListener {
 
 		// logging files
 		transactionFile = new File(TraderFolders.getLogging(ProgramName.LunoBitstamp), "transactions.txt");
-		limitsFile = new File(TraderFolders.getLogging(ProgramName.LunoBitstamp), "limits.txt");
-		wallet = new AccWallet(EMarketType.ZAR_BTC);
+
+		wallet = new AccWallet(MarketType.ZAR_BTC);
 
 		limitGetterDiff = new MeanStandardDeviation(Formula.USDBITSTAMP_ZARLUNO_BTC_PERCDIFF, 24 * 60, 1);
 		limitGetterRate = new MeanStandardDeviation(Formula.USDBITSTAMP_ZARLUNO_BTC, 24 * 60, 1);
 
-		luno = new LunoBTCManager(EMarketType.ZAR_BTC, wallet);
+		luno = new LunoBTCManager(MarketType.ZAR_BTC, wallet);
 		luno.addOrderFilledListener(this);
 
-		MarketEvents.get(EMarketType.ZAR_BTC).addSpreadListener(this);
+		MarketEvents.get(MarketType.ZAR_BTC).addSpreadListener(this);
 	}
 
 	@Override
@@ -78,7 +77,7 @@ public class LBTrader implements IOrderFilled, ISpreadListener {
 			TradeLimits limitsRate = limitGetterRate.getTradeLimits(0.1, 5);
 
 			double zarusd = MarketData.INSTANCE.getZARrUSD(1).mid();
-			SpreadChanged spread = MarketEvents.getSpread(EMarketType.ZAR_BTC);
+			Spread spread = MarketEvents.getSpread(MarketType.ZAR_BTC);
 			MarketPrice mp = MarketData.INSTANCE.getUSDrBTC(1);
 
 			double rateUtoZ = spread.priceAsk / mp.ask;
